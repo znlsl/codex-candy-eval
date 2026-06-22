@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 import unicodedata
 
@@ -26,8 +29,14 @@ ANSWER_PATTERN = re.compile(r"(?<!\d)21(?!\d)")
 
 
 def run_codex(model: str | None, effort: str):
+    # Windows 上 codex 多是 npm 安装的 codex.cmd 包装脚本，裸名字 CreateProcess 找
+    # 不到（PATH 搜索只补 .exe），用 shutil.which 解析出带扩展名的完整路径再执行。
+    exe = shutil.which("codex")
+    if not exe:
+        raise RuntimeError("找不到 codex 可执行文件，请确认已安装并加入 PATH。")
+
     cmd = [
-        "codex", "exec", "--json",
+        exe, "exec", "--json",
         "--skip-git-repo-check",
         "--ephemeral",
         "-s", "read-only",
@@ -35,10 +44,16 @@ def run_codex(model: str | None, effort: str):
     ]
     if model:
         cmd += ["-m", model]
-    cmd.append(CODEX_PROMPT)
 
+    # 多行题目通过 stdin 传入：作为命令行参数时，经 cmd.exe/codex.cmd 包装后换行会被
+    # 吞掉，而管道里的内容能完整保留。codex exec 在无位置参数且 stdin 非 TTY 时读 stdin。
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL
+        cmd,
+        input=CODEX_PROMPT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "codex exec failed")
@@ -127,7 +142,50 @@ def preview(text: str, limit: int = 40) -> str:
     return "".join(result) + "..."
 
 
+def _enable_windows_ansi() -> bool:
+    """开启 Windows 控制台的 VT 处理，让 ANSI 转义序列（含光标定位）生效。"""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.restype = ctypes.c_void_p
+        kernel32.GetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        kernel32.SetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+
+        STD_OUTPUT_HANDLE = -11
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        handle = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(
+            kernel32.SetConsoleMode(handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        )
+    except Exception:
+        return False
+
+
+def setup_console() -> bool:
+    """统一输出为 UTF-8（避免 ✓/✗、中文在 GBK 等控制台编码下抛 UnicodeEncodeError），
+    并探测是否可用 ANSI 光标控制做表格原地刷新。
+
+    返回 True 表示可原地重绘；否则（如输出被重定向、或旧版 Windows 无法开 VT）退化为
+    结束后一次性打印整张表，避免屏幕上出现 `←[s` 之类的转义乱码。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    if not sys.stdout.isatty():
+        return False
+    if os.name == "nt":
+        return _enable_windows_ansi()
+    return True
+
+
 def main() -> None:
+    use_ansi = setup_console()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-m", "--model", help="Codex model name; omit for the local default.")
     parser.add_argument(
@@ -155,17 +213,20 @@ def main() -> None:
     # 串行执行：逐个请求，完成一个立即打印该行结果。
     rows = []
     graded = []
-    # 保存表格起始位置；后续直接回到这里重绘，不依赖终端换行数。
-    print("\033[s", end="", flush=True)
+    # 支持 ANSI 时保存表格起始位置，后续回到这里原地重绘；否则结束后一次性打印。
+    if use_ansi:
+        print("\033[s", end="", flush=True)
     for index in range(1, args.tests + 1):
         row, ok = run_one(index)
         rows.append(row)
         if ok is not None:
             graded.append(ok)
-        table = render_table(headers, rows, aligns)
-        # 恢复到表格起始位置，清除旧表格，再绘制累计结果。
-        print("\033[u\033[J", end="")
-        print(table, flush=True)
+        if use_ansi:
+            # 恢复到表格起始位置，清除旧表格，再绘制累计结果。
+            print("\033[u\033[J", end="")
+            print(render_table(headers, rows, aligns), flush=True)
+    if not use_ansi:
+        print(render_table(headers, rows, aligns), flush=True)
 
     correct = sum(graded)
     print(f"\nGraded {len(graded)}/{args.tests}  correct={correct}  "
