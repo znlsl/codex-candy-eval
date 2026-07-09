@@ -208,7 +208,7 @@ def main() -> None:
     parser.add_argument("-m", "--model", help="Codex model name; omit for the local default.")
     parser.add_argument(
         "-r", "--reasoning-effort", default="medium",
-        choices=["low", "medium", "high", "xhigh"],
+        choices=["low", "medium", "high", "xhigh", "max", "ultra"],
     )
     parser.add_argument("-n", "--tests", type=int, default=1)
     args = parser.parse_args()
