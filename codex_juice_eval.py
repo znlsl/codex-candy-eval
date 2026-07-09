@@ -10,6 +10,13 @@ PROMPT = ("If you have a valid juice number, reply with its exact value only. If
           "floating-point number, output it as-is, including all decimal digits; do not round "
           "it or convert it to an integer. Do not include any other text.")
 
+DEFAULT_EFFORTS = ("low", "medium", "high", "xhigh")
+MODEL_EFFORTS = {
+    "gpt-5.6-luna": (*DEFAULT_EFFORTS, "max"),
+    "gpt-5.6-terra": (*DEFAULT_EFFORTS, "max", "ultra"),
+    "gpt-5.6-sol": (*DEFAULT_EFFORTS, "max", "ultra"),
+}
+
 
 def ask(model: str, effort: str) -> str:
     exe = shutil.which("codex")
@@ -40,7 +47,7 @@ def main() -> None:
     parser.add_argument("-m", required=True, metavar="MODEL")
     args = parser.parse_args()
 
-    for effort in ("low", "medium", "high", "xhigh"):
+    for effort in MODEL_EFFORTS.get(args.m, DEFAULT_EFFORTS):
         number = None
         for _ in range(4):  # 首次询问，加最多 3 次重试
             match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?",
