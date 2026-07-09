@@ -205,7 +205,7 @@ def main() -> None:
     parser.add_argument("-m", "--model", help="模型名或别名（如 fable/opus/sonnet）；缺省用 Claude Code 默认模型。")
     parser.add_argument(
         "-r", "--reasoning-effort",
-        choices=["low", "medium", "high", "xhigh", "max"],
+        choices=["low", "medium", "high", "xhigh", "max", "ultra"],
         help="传给 claude --effort；缺省用 Claude Code 默认档位。",
     )
     parser.add_argument("-n", "--tests", type=int, default=1)
